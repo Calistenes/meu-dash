@@ -116,15 +116,15 @@ export const parseCSVToColaboradores = (
               ptRep = parseNum(rawVal);
             } else if (hdr.includes('REG')) {
               ptReg = parseNum(rawVal);
-            } else if (hdr.includes('REC') && !hdr.includes('RECORR') && !hdr.includes('REC%')) {
+            } else if (hdr.includes('REC') && !hdr.includes('RECORR') && !hdr.includes('%')) {
               ptRec = parseNum(rawVal);
             } else if (hdr.includes('EXTRA')) {
               ptProdExtra = parseNum(rawVal);
             } else if (hdr.includes('INFRAC')) {
               infracoes = parseNum(rawVal);
-            } else if (hdr.includes('PONTO') || hdr.includes('PTS')) {
+            } else if (hdr.includes('PONTO') || (hdr.includes('PTS') && !hdr.includes('DIARIA') && !hdr.includes('DIARIOS'))) {
               pontos = parseNum(rawVal);
-            } else if (hdr.includes('RECORR') || hdr.includes('REC%') || hdr.includes('PERCENTUAL')) {
+            } else if (hdr.includes('RECORR') || (hdr.includes('REC') && hdr.includes('%'))) {
               recPercent = parseNum(rawVal, 5);
             } else if (hdr.includes('CLIENTE')) {
               clientesTotais = parseInt(rawVal, 10) || 100;
