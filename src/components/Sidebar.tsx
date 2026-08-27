@@ -177,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 .
               </>
             ) : (
-              ' Todos os colaboradores atingiram os 176 pontos!'
+              ` Todos os colaboradores atingiram os ${config.metaPadrao} pontos!`
             )}
           </p>
         </div>

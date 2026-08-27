@@ -73,7 +73,7 @@ export const RankingTable: React.FC<RankingTableProps> = ({
             onChange={(e) => setSupervisorFiltro(e.target.value)}
             className="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none"
           >
-            <option value="TODOS">Todos Supervisors</option>
+            <option value="TODOS">Todos os Supervisores</option>
             {supervisores.map((sup) => (
               <option key={sup} value={sup}>
                 {sup}

@@ -98,7 +98,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ isOpen, onClose,
         <input
           type="file"
           ref={fileInputRef}
-          accept=".csv, .tsv, .txt"
+          accept=".csv,.tsv,.txt"
           onChange={handleFileUpload}
           className="hidden"
         />
@@ -123,10 +123,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ isOpen, onClose,
           </div>
           <div>
             <p className="text-xs font-bold text-slate-800">
-              Arraste e solte seu arquivo CSV/XLSX aqui, ou <span className="text-[#1F4E79] underline">clique para selecionar</span>
+              Arraste e solte seu arquivo CSV aqui, ou <span className="text-[#1F4E79] underline">clique para selecionar</span>
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Processado automaticamente via PapaParse (aceita arquivo exportado do Excel ou Google Sheets)
+              Aceita .csv, .tsv ou .txt — no Excel/Google Sheets, use "Salvar como" ou "Fazer download" em formato CSV
             </p>
           </div>
         </div>

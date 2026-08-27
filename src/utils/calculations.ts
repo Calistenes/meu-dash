@@ -37,8 +37,6 @@ export function calcularAtingimentoEBonus(
     const metaTarget = c.meta > 0 ? c.meta : metaPadrao;
     const percentualAtingimento = metaTarget > 0 ? (c.pontos / metaTarget) * 100 : 0;
 
-    let premioBase = 0;
-
     const pontosFaltantes = Math.max(0, metaTarget - c.pontos);
     const pontosDiariosNecessarios =
       diasUteisRestantes > 0 ? pontosFaltantes / diasUteisRestantes : 0;
@@ -59,9 +57,6 @@ export function calcularAtingimentoEBonus(
     return {
       colaborador: c,
       percentualAtingimento,
-      premioBase: 0,
-      bonusTop3: 0,
-      totalPremio: 0,
       pontosFaltantes,
       pontosDiariosNecessarios,
       ritmoStatus,

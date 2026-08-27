@@ -15,6 +15,11 @@ import { CsvImportModal } from './components/CsvImportModal';
 import { DADOS_INICIAIS_COLABORADORES, CONTATOS_EXEMPLO, DADOS_INICIAIS_INATIVOS } from './data/initialData';
 import { Colaborador, ItemInativo, ConfiguracoesCiclo, CalculoResultado } from './types';
 import { calcularAtingimentoEBonus } from './utils/calculations';
+
+const mesAnoAtual = () => {
+  const texto = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+};
 import { GOOGLE_APPS_SCRIPT_CODE } from './utils/gasScript';
 
 export default function App() {
@@ -26,7 +31,7 @@ export default function App() {
   const [config, setConfig] = useState<ConfiguracoesCiclo>({
     diasUteisRestantes: 12,
     metaPadrao: 176,
-    mesAno: 'Maio de 2024',
+    mesAno: mesAnoAtual(),
   });
 
   const [colaboradorModal, setColaboradorModal] = useState<Colaborador | null>(null);
@@ -108,7 +113,7 @@ export default function App() {
 
   const handleExportarCSV = () => {
     let csv =
-      'RANKING;FUNCIONARIO;SUPERVISOR;QUARTIL;RECORRENCIA;PERCENTUAL_ATINGIMENTO;PONTOS;META;META_DIARIA_DIAS_UTEIS;BONUS_BASE;BONUS_TOP3;TOTAL_PREMIO\n';
+      'RANKING;FUNCIONARIO;SUPERVISOR;QUARTIL;RECORRENCIA;PERCENTUAL_ATINGIMENTO;PONTOS;META;META_DIARIA_DIAS_UTEIS\n';
 
     resultados.forEach((r, idx) => {
       const c = r.colaborador;
@@ -117,9 +122,7 @@ export default function App() {
 
       csv += `${idx + 1}º Place;${c.funcionario};${c.supervisor};${c.quartil};${c.recPercent.toFixed(
         1
-      )}%;${r.percentualAtingimento.toFixed(1)}%;${c.pontos.toFixed(2)};${c.meta || 176};${metaDiariaTxt};R$ ${r.premioBase.toFixed(
-        2
-      )};R$ ${r.bonusTop3.toFixed(2)};R$ ${r.totalPremio.toFixed(2)}\n`;
+      )}%;${r.percentualAtingimento.toFixed(1)}%;${c.pontos.toFixed(2)};${c.meta || 176};${metaDiariaTxt}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
