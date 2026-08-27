@@ -1,0 +1,6 @@
+{
+  "name": "Gestão Raio-X - Visão Líder",
+  "description": "Calculadora de Produtividade IAT, Meta Diária em Dias Úteis e Gerador de Feedback Orientativo para Colaboradores",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
