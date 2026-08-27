@@ -77,7 +77,7 @@ export default function App() {
   };
 
   const handleAdicionarColaborador = () => {
-    const novoId = Date.now().toString();
+    const novoId = Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 8);
     const novo: Colaborador = {
       id: novoId,
       funcionario: `NOVO TÉCNICO ${colaboradores.length + 1} - 0000`,
@@ -96,8 +96,7 @@ export default function App() {
       pontos: 100.0,
       recPercent: 6.0,
       clientesTotais: 80,
-      meta: 176,
-      falta: 76.0,
+      meta: config.metaPadrao,
     };
 
     setColaboradores((prev) => [novo, ...prev]);
@@ -133,6 +132,7 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     mostrarNotificacao('📥 CSV exportado com sucesso!');
   };
 
@@ -235,6 +235,7 @@ export default function App() {
               setColaboradores={setColaboradores}
               onAdicionarColaborador={handleAdicionarColaborador}
               onResetarDados={handleResetarDados}
+              metaPadrao={config.metaPadrao}
             />
           )}
 

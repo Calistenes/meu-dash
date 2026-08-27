@@ -17,7 +17,6 @@ export interface Colaborador {
   recPercent: number;
   clientesTotais: number;
   meta: number; // default 176
-  falta: number;
 }
 
 export interface ItemInativo {

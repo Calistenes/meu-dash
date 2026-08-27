@@ -20,7 +20,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 4.2,
     clientesTotais: 142,
     meta: 176,
-    falta: 0.0,
   },
   {
     id: '2',
@@ -41,7 +40,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 8.1,
     clientesTotais: 128,
     meta: 176,
-    falta: 14.0,
   },
   {
     id: '3',
@@ -62,7 +60,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 9.5,
     clientesTotais: 115,
     meta: 176,
-    falta: 27.5,
   },
   {
     id: '4',
@@ -83,7 +80,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 11.8,
     clientesTotais: 94,
     meta: 176,
-    falta: 66.0,
   },
   {
     id: '5',
@@ -104,7 +100,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 5.8,
     clientesTotais: 136,
     meta: 176,
-    falta: 0.0,
   },
   {
     id: '6',
@@ -125,7 +120,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 8.9,
     clientesTotais: 108,
     meta: 176,
-    falta: 42.0,
   },
   {
     id: '7',
@@ -146,7 +140,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 14.2,
     clientesTotais: 72,
     meta: 176,
-    falta: 90.0,
   },
   {
     id: '8',
@@ -167,7 +160,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 0.0,
     clientesTotais: 0,
     meta: 176,
-    falta: 176.0,
   },
   {
     id: '9',
@@ -188,7 +180,6 @@ export const DADOS_INICIAIS_COLABORADORES: Colaborador[] = [
     recPercent: 7.5,
     clientesTotais: 119,
     meta: 176,
-    falta: 26.0,
   }
 ];
 

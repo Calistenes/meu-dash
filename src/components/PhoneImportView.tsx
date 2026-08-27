@@ -63,6 +63,9 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
       digits = '55' + digits;
     }
 
+    // Só é um telefone BR válido com 12 ou 13 dígitos (55 + DDD + número)
+    if (digits.length !== 12 && digits.length !== 13) return '';
+
     return digits;
   };
 
@@ -111,7 +114,6 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
               col.includes('FUNC') ||
               col.includes('NOME') ||
               col.includes('COLABORADOR') ||
-              col.includes('RE') ||
               col.includes('TECNICO')
             ) {
               nameIdx = idx;
@@ -157,7 +159,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
           if (!row || row.length < 1) continue;
 
           const rawNome = (row[nameIdx] || '').toString().trim();
-          const rawTel = (row[phoneIdx] || row[nameIdx + 1] || '').toString().trim();
+          const rawTel = (row[phoneIdx] || '').toString().trim();
 
           if (!rawNome) continue;
 
@@ -269,6 +271,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleBaixarModeloCSV = () => {
@@ -283,12 +286,13 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Cruzamento de colaboradores com os telefones
   const listaMapeada = colaboradores.map((c) => {
     const chave = c.funcionario.split('-')[0].trim().toUpperCase();
-    const tel = telefonesMapa[chave] || telefonesMapa[c.funcionario.trim().toUpperCase()] || '';
+    const tel = telefonesMapa[chave] || '';
     return {
       colaborador: c,
       chave,
