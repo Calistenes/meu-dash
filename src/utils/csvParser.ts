@@ -4,7 +4,8 @@ import { Colaborador } from '../types';
 export const parseCSVToColaboradores = (
   source: File | string,
   onSuccess: (items: Colaborador[]) => void,
-  onError: (errorMsg: string) => void
+  onError: (errorMsg: string) => void,
+  metaPadrao = 176
 ) => {
   Papa.parse(source as any, {
     skipEmptyLines: true,
@@ -88,7 +89,7 @@ export const parseCSVToColaboradores = (
         let pontos = 0;
         let recPercent = 5.0;
         let clientesTotais = 100;
-        let meta = 176;
+        let meta = metaPadrao;
 
         if (headers.length > 0) {
           headers.forEach((hdr, idx) => {
@@ -115,20 +116,20 @@ export const parseCSVToColaboradores = (
               ptRep = parseNum(rawVal);
             } else if (hdr.includes('REG')) {
               ptReg = parseNum(rawVal);
-            } else if (hdr.includes('REC') && !hdr.includes('RECORR') && !hdr.includes('REC%')) {
+            } else if (hdr.includes('REC') && !hdr.includes('RECORR') && !hdr.includes('%')) {
               ptRec = parseNum(rawVal);
             } else if (hdr.includes('EXTRA')) {
               ptProdExtra = parseNum(rawVal);
             } else if (hdr.includes('INFRAC')) {
               infracoes = parseNum(rawVal);
-            } else if (hdr.includes('PONTO') || hdr.includes('PTS')) {
+            } else if (hdr.includes('PONTO') || (hdr.includes('PTS') && !hdr.includes('DIARIA') && !hdr.includes('DIARIOS'))) {
               pontos = parseNum(rawVal);
-            } else if (hdr.includes('RECORR') || hdr.includes('REC%') || hdr.includes('PERCENTUAL')) {
+            } else if (hdr.includes('RECORR') || (hdr.includes('REC') && hdr.includes('%'))) {
               recPercent = parseNum(rawVal, 5);
             } else if (hdr.includes('CLIENTE')) {
               clientesTotais = parseInt(rawVal, 10) || 100;
             } else if (hdr.includes('META') && !hdr.includes('META_DIARIA')) {
-              meta = parseNum(rawVal, 176);
+              meta = parseNum(rawVal, metaPadrao);
             }
           });
         }
@@ -141,7 +142,7 @@ export const parseCSVToColaboradores = (
             quartil = (row[3] || '1º QUARTIL').toString().trim();
             recPercent = parseNum(row[4], 5);
             pontos = parseNum(row[6], 0);
-            meta = parseNum(row[7], 176);
+            meta = parseNum(row[7], metaPadrao);
           } else {
             funcionario = (row[0] || '').toString().trim();
             cidade = (row[1] || 'SÃO PAULO - SP').toString().trim();
@@ -159,7 +160,7 @@ export const parseCSVToColaboradores = (
             pontos = parseNum(row[13]) || ptInst + ptRep + ptReg + ptRec + ptProdExtra - infracoes;
             recPercent = parseNum(row[14], 5);
             clientesTotais = parseInt(row[15] || '100', 10) || 100;
-            meta = parseNum(row[16], 176);
+            meta = parseNum(row[16], metaPadrao);
           }
         }
 
@@ -168,8 +169,7 @@ export const parseCSVToColaboradores = (
             pontos = ptInst + ptRep + ptReg + ptRec + ptProdExtra - infracoes;
           }
 
-          const metaFinal = meta || 176;
-          const faltaCalc = Math.max(0, metaFinal - pontos);
+          const metaFinal = meta || metaPadrao;
 
           newItems.push({
             id: 'colab_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6),
@@ -190,7 +190,6 @@ export const parseCSVToColaboradores = (
             recPercent: Number(recPercent.toFixed(1)),
             clientesTotais: clientesTotais || 100,
             meta: metaFinal,
-            falta: Number(faltaCalc.toFixed(2)),
           });
         }
       }

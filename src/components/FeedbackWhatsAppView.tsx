@@ -30,6 +30,7 @@ export const FeedbackWhatsAppView: React.FC<FeedbackWhatsAppViewProps> = ({
   }
 
   const c = itemAtual.colaborador;
+  const metaTarget = c.meta > 0 ? c.meta : 176;
   const nomeChave = c.funcionario.split('-')[0].trim().toUpperCase();
   const telefoneAtual = telefonesMapa[nomeChave] || '';
 
@@ -105,7 +106,7 @@ export const FeedbackWhatsAppView: React.FC<FeedbackWhatsAppViewProps> = ({
               {c.funcionario}
             </h2>
             <p className="text-xs text-slate-500">
-              Cidade: {c.cidade} | Supervisor: {c.supervisor || 'N/A'} | Meta: {c.meta || 176} pts
+              Cidade: {c.cidade} | Supervisor: {c.supervisor || 'N/A'} | Meta: {metaTarget} pts
             </p>
           </div>
 
@@ -146,7 +147,7 @@ export const FeedbackWhatsAppView: React.FC<FeedbackWhatsAppViewProps> = ({
             <p className="text-base font-bold text-blue-700">{itemAtual.percentualAtingimento.toFixed(1)}%</p>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-center">
-            <p className="text-[10px] font-bold text-slate-400 uppercase">Falta p/ Meta (176)</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase">Falta p/ Meta ({metaTarget})</p>
             <p className="text-base font-bold text-amber-700">{itemAtual.pontosFaltantes.toFixed(2)} pts</p>
           </div>
           <div className="bg-[#1F4E79]/5 p-2.5 rounded-lg border border-blue-200 text-center">

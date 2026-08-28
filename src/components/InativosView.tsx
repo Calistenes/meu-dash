@@ -66,16 +66,6 @@ export const InativosView: React.FC<InativosViewProps> = ({
   const [modalAberto, setModalAberto] = useState(false);
   const [itemEdicao, setItemEdicao] = useState<ItemInativo | null>(null);
 
-  // Modal Detalhes do Colaborador / Preview WhatsApp
-  const [colabModalDetalhes, setColabModalDetalhes] = useState<{
-    colaborador: string;
-    matricula: string;
-    uf: string;
-    cargo: string;
-    lider: string;
-    itens: ItemInativo[];
-  } | null>(null);
-
   // Form states matching user's CSV
   const [formMatricula, setFormMatricula] = useState('');
   const [formColaborador, setFormColaborador] = useState('');
@@ -256,6 +246,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
     if (onNotificar) {
       onNotificar(`📄 Arquivo individual TXT gerado para ${grupo.colaborador}`);
@@ -287,6 +278,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Baixar Pacote ZIP com todos os arquivos TXT individuais dos colaboradores
@@ -321,6 +313,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
     if (onNotificar) {
       onNotificar(`📦 Arquivo ZIP gerado com ${colabGrupos.length} arquivos TXT de inativos individuais!`);
@@ -355,6 +348,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 
     if (onNotificar) {
       onNotificar(`📊 CSV Consolidado para Envio de WhatsApp gerado com sucesso!`);
@@ -412,6 +406,9 @@ export const InativosView: React.FC<InativosViewProps> = ({
               cargoIdx = idx;
             } else if (col.includes('LIDER') || col.includes('LÍDER') || col.includes('SUPERVISOR')) {
               liderIdx = idx;
+            } else if (col.includes('ID ITEM') || col.includes('IDITEM') || col === 'ID') {
+              // Checado antes de "ITEM" genérico, já que "ID ITEM" também contém "ITEM"
+              idItemIdx = idx;
             } else if (
               col.includes('NOME ITEM') ||
               col.includes('ITEM') ||
@@ -419,8 +416,6 @@ export const InativosView: React.FC<InativosViewProps> = ({
               col.includes('DESCRICAO')
             ) {
               nomeItemIdx = idx;
-            } else if (col.includes('ID ITEM') || col.includes('IDITEM') || col === 'ID') {
-              idItemIdx = idx;
             } else if (col.includes('SERIAL') || col.includes('NS') || col.includes('SERIE')) {
               serialIdx = idx;
             } else if (col.includes('CLASSE') || col.includes('CATEGORIA')) {
@@ -432,17 +427,18 @@ export const InativosView: React.FC<InativosViewProps> = ({
             ) {
               situacaoIdx = idx;
             } else if (
+              col.includes('SAIDA VALIDA') ||
+              col.includes('SAÍDA VÁLIDA') ||
+              col.includes('SAIDA')
+            ) {
+              // Checado antes de "DATA" genérico, já que uma variante como "DATA SAÍDA VÁLIDA" também contém "DATA"
+              saidaValidaIdx = idx;
+            } else if (
               col.includes('DATA MOVIMENTO') ||
               col.includes('MOVIMENTO') ||
               col.includes('DATA')
             ) {
               dataMovIdx = idx;
-            } else if (
-              col.includes('SAIDA VALIDA') ||
-              col.includes('SAÍDA VÁLIDA') ||
-              col.includes('SAIDA')
-            ) {
-              saidaValidaIdx = idx;
             } else if (col.includes('DIAS CORRIDOS') || col.includes('DIAS')) {
               diasCorridosIdx = idx;
             } else if (col.includes('ESTOQUE') || col.includes('QTD') || col.includes('QUANTIDADE')) {
@@ -513,7 +509,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
           }
 
           novosInativos.push({
-            id: `csv-inativo-${Date.now()}-${i}`,
+            id: `csv-inativo-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}`,
             matricula: rawMatricula,
             colaborador: rawColab,
             uf: rawUf,
@@ -539,6 +535,8 @@ export const InativosView: React.FC<InativosViewProps> = ({
         if (novosInativos.length > 0) {
           if (modoSubstituir) {
             setInativos(novosInativos);
+            setFiltroSituacao('todos');
+            setFiltroClasse('todos');
           } else {
             setInativos((prev) => [...prev, ...novosInativos]);
           }
@@ -559,7 +557,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file && !isLoading) {
       processarTextoCSVInativos(file);
     }
     e.target.value = '';
@@ -568,6 +566,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
+    if (isLoading) return;
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       processarTextoCSVInativos(e.dataTransfer.files[0]);
     }
@@ -642,7 +641,6 @@ export const InativosView: React.FC<InativosViewProps> = ({
         recPercent: 0,
         clientesTotais: 0,
         meta: 176,
-        falta: 176,
       };
 
       setColaboradores((prev) => [novoColab, ...prev]);
@@ -670,6 +668,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleBaixarModeloInativos = () => {
@@ -687,6 +686,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Estatísticas
@@ -815,6 +815,9 @@ export const InativosView: React.FC<InativosViewProps> = ({
           <div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Itens Inativos</p>
             <p className="text-2xl font-bold text-amber-600 mt-0.5">{totalInativos}</p>
+            {totalAtivos > 0 && (
+              <p className="text-[10px] font-medium text-emerald-600 mt-0.5">{totalAtivos} já ativos</p>
+            )}
           </div>
           <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
             <UserX className="w-6 h-6" />
@@ -1018,7 +1021,7 @@ export const InativosView: React.FC<InativosViewProps> = ({
 
                 return (
                   <div
-                    key={grupo.colaborador}
+                    key={grupo.matricula ? `${grupo.matricula}_${grupo.colaborador}` : grupo.colaborador}
                     className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4"
                   >
                     {/* Header do Card */}

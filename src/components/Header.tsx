@@ -119,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onAbrirImportarCSV}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
-            title="Importar planilha CSV/XLSX para alimentar todo o Dashboard"
+            title="Importar planilha CSV para alimentar todo o Dashboard"
           >
             <Upload className="w-3.5 h-3.5" />
             Importar CSV

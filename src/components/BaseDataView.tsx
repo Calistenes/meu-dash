@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Database, Plus, Trash2, Edit3, RefreshCw, Upload, Check, FileSpreadsheet, FileText, AlertCircle } from 'lucide-react';
-import Papa from 'papaparse';
+import { parseCSVToColaboradores } from '../utils/csvParser';
 import { Colaborador } from '../types';
 
 interface BaseDataViewProps {
@@ -8,6 +8,7 @@ interface BaseDataViewProps {
   setColaboradores: React.Dispatch<React.SetStateAction<Colaborador[]>>;
   onAdicionarColaborador: () => void;
   onResetarDados: () => void;
+  metaPadrao: number;
 }
 
 export const BaseDataView: React.FC<BaseDataViewProps> = ({
@@ -15,6 +16,7 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
   setColaboradores,
   onAdicionarColaborador,
   onResetarDados,
+  metaPadrao,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Colaborador>>({});
@@ -24,6 +26,13 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
   const [notificacao, setNotificacao] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalFileInputRef = useRef<HTMLInputElement>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
 
   const handleStartEdit = (item: Colaborador) => {
     setEditingId(item.id);
@@ -31,8 +40,9 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
   };
 
   const showToast = (msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setNotificacao(msg);
-    setTimeout(() => setNotificacao(null), 4000);
+    toastTimeoutRef.current = setTimeout(() => setNotificacao(null), 4000);
   };
 
   const handleSaveEdit = (id: string) => {
@@ -40,7 +50,7 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
       prev.map((c) => {
         if (c.id === id) {
           const updated = { ...c, ...editForm };
-          // Recalcular pontos e falta
+          // Recalcular pontos
           const pontosCalculados =
             (updated.ptInst || 0) +
             (updated.ptRep || 0) +
@@ -49,13 +59,10 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
             (updated.ptProdExtra || 0) -
             (updated.infracoesQualidade || 0);
 
-          const meta = updated.meta || 176;
-          const falta = Math.max(0, meta - pontosCalculados);
-
           return {
             ...updated,
+            meta: updated.meta || metaPadrao,
             pontos: Number(pontosCalculados.toFixed(2)),
-            falta: Number(falta.toFixed(2)),
           };
         }
         return c;
@@ -70,214 +77,26 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
     }
   };
 
-  // Função central de parsing via PapaParse
+  // Função central de parsing (compartilhada com o modal global de importação)
   const processarConteudoCSV = (source: File | string) => {
-    Papa.parse(source as any, {
-      skipEmptyLines: true,
-      dynamicTyping: false,
-      delimiter: '', // auto-detect ;, tab, comma
-      complete: (results) => {
-        const rows = results.data as string[][];
-        if (!rows || rows.length === 0) {
-          alert('O arquivo ou texto fornecido está vazio.');
-          return;
-        }
+    if (colaboradores.length > 0) {
+      const confirmado = confirm(
+        `Isso vai substituir todos os ${colaboradores.length} colaboradores atuais da Base Raio-X pelos dados da planilha importada. Deseja continuar?`
+      );
+      if (!confirmado) return;
+    }
 
-        // Helper para converter string de número formato PT-BR ou EN para float
-        const parseNum = (val: string | undefined, defaultVal = 0): number => {
-          if (val === undefined || val === null || val === '') return defaultVal;
-          const str = val.toString().trim();
-          if (!str) return defaultVal;
-
-          // Remover R$, %, espaços
-          const cleaned = str
-            .replace(/R\$/gi, '')
-            .replace(/%/g, '')
-            .replace(/\s/g, '')
-            .replace(/pts\/dia/gi, '')
-            .replace(/Meta Batida/gi, '0');
-
-          // Tratar números no formato 1.500,00 ou 184,20
-          let norm = cleaned;
-          if (cleaned.includes(',') && cleaned.includes('.')) {
-            // ex: 1.500,20 -> remover ponto e trocar vírgula por ponto
-            norm = cleaned.replace(/\./g, '').replace(',', '.');
-          } else if (cleaned.includes(',')) {
-            norm = cleaned.replace(',', '.');
-          }
-
-          const num = parseFloat(norm);
-          return isNaN(num) ? defaultVal : num;
-        };
-
-        let startIndex = 0;
-        const firstRowStr = rows[0].map(c => (c || '').toString()).join(' ').toUpperCase();
-        
-        const isHeader =
-          firstRowStr.includes('FUNCIONARIO') ||
-          firstRowStr.includes('RANKING') ||
-          firstRowStr.includes('COLABORADOR') ||
-          firstRowStr.includes('SUPERVISOR') ||
-          firstRowStr.includes('PONTOS') ||
-          firstRowStr.includes('QUARTIL');
-
-        let headers: string[] = [];
-        if (isHeader) {
-          headers = rows[0].map((h) =>
-            (h || '')
-              .toString()
-              .trim()
-              .toUpperCase()
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-          );
-          startIndex = 1;
-        }
-
-        const newItems: Colaborador[] = [];
-
-        for (let i = startIndex; i < rows.length; i++) {
-          const row = rows[i];
-          if (!row || row.length < 2) continue;
-
-          let funcionario = '';
-          let cidade = 'SÃO PAULO - SP';
-          let supervisor = 'SUPERVISOR';
-          let gerente = 'GERENTE';
-          let tipo = 'TÉCNICO IAT';
-          let statusMes = '-';
-          let quartil = '1º QUARTIL';
-          let ptInst = 0;
-          let ptRep = 0;
-          let ptReg = 0;
-          let ptRec = 0;
-          let ptProdExtra = 0;
-          let infracoes = 0;
-          let pontos = 0;
-          let recPercent = 5.0;
-          let clientesTotais = 100;
-          let meta = 176;
-
-          // Se identificou cabeçalhos
-          if (headers.length > 0) {
-            headers.forEach((hdr, idx) => {
-              const rawVal = (row[idx] || '').toString().trim();
-              if (!rawVal) return;
-
-              if (hdr.includes('FUNC') || hdr.includes('COLABORADOR') || hdr.includes('NOME')) {
-                funcionario = rawVal;
-              } else if (hdr.includes('CIDADE') || hdr.includes('PRACA') || hdr.includes('FILIAL')) {
-                cidade = rawVal;
-              } else if (hdr.includes('SUPERV')) {
-                supervisor = rawVal;
-              } else if (hdr.includes('GERENT')) {
-                gerente = rawVal;
-              } else if (hdr.includes('TIPO') || hdr.includes('CARGO')) {
-                tipo = rawVal;
-              } else if (hdr.includes('STATUS')) {
-                statusMes = rawVal;
-              } else if (hdr.includes('QUARTIL')) {
-                quartil = rawVal;
-              } else if (hdr.includes('INST')) {
-                ptInst = parseNum(rawVal);
-              } else if (hdr.includes('REP')) {
-                ptRep = parseNum(rawVal);
-              } else if (hdr.includes('REG')) {
-                ptReg = parseNum(rawVal);
-              } else if (hdr.includes('REC') && !hdr.includes('RECORR') && !hdr.includes('REC%')) {
-                ptRec = parseNum(rawVal);
-              } else if (hdr.includes('EXTRA')) {
-                ptProdExtra = parseNum(rawVal);
-              } else if (hdr.includes('INFRAC')) {
-                infracoes = parseNum(rawVal);
-              } else if (hdr.includes('PONTO') || hdr.includes('PTS')) {
-                pontos = parseNum(rawVal);
-              } else if (hdr.includes('RECORR') || hdr.includes('REC%') || hdr.includes('PERCENTUAL')) {
-                recPercent = parseNum(rawVal, 5);
-              } else if (hdr.includes('CLIENTE')) {
-                clientesTotais = parseInt(rawVal, 10) || 100;
-              } else if (hdr.includes('META') && !hdr.includes('META_DIARIA')) {
-                meta = parseNum(rawVal, 176);
-              }
-            });
-          }
-
-          // Fallback por posição se funcionario não foi mapeado pelo cabeçalho
-          if (!funcionario && row.length >= 2) {
-            // Verificar se a linha começa com RANKING (ex: "1º Place")
-            if (row[0] && (row[0].includes('Place') || row[0].includes('º'))) {
-              funcionario = (row[1] || '').toString().trim();
-              supervisor = (row[2] || 'SUPERVISOR').toString().trim();
-              quartil = (row[3] || '1º QUARTIL').toString().trim();
-              recPercent = parseNum(row[4], 5);
-              pontos = parseNum(row[6], 0);
-              meta = parseNum(row[7], 176);
-            } else {
-              funcionario = (row[0] || '').toString().trim();
-              cidade = (row[1] || 'SÃO PAULO - SP').toString().trim();
-              supervisor = (row[2] || 'SUPERVISOR').toString().trim();
-              gerente = (row[3] || 'GERENTE').toString().trim();
-              tipo = (row[4] || 'TÉCNICO IAT').toString().trim();
-              statusMes = (row[5] || '-').toString().trim();
-              quartil = (row[6] || '1º QUARTIL').toString().trim();
-              ptInst = parseNum(row[7]);
-              ptRep = parseNum(row[8]);
-              ptReg = parseNum(row[9]);
-              ptRec = parseNum(row[10]);
-              ptProdExtra = parseNum(row[11]);
-              infracoes = parseNum(row[12]);
-              pontos = parseNum(row[13]) || (ptInst + ptRep + ptReg + ptRec + ptProdExtra - infracoes);
-              recPercent = parseNum(row[14], 5);
-              clientesTotais = parseInt(row[15] || '100', 10) || 100;
-              meta = parseNum(row[16], 176);
-            }
-          }
-
-          if (funcionario) {
-            if (!pontos && (ptInst || ptRep || ptReg || ptRec || ptProdExtra)) {
-              pontos = ptInst + ptRep + ptReg + ptRec + ptProdExtra - infracoes;
-            }
-
-            const metaFinal = meta || 176;
-            const faltaCalc = Math.max(0, metaFinal - pontos);
-
-            newItems.push({
-              id: 'colab_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6),
-              funcionario,
-              cidade,
-              supervisor,
-              gerente,
-              tipo,
-              statusMes: statusMes || '-',
-              quartil: quartil || '1º QUARTIL',
-              ptInst,
-              ptRep,
-              ptReg,
-              ptRec,
-              ptProdExtra,
-              infracoesQualidade: infracoes,
-              pontos: Number(pontos.toFixed(2)),
-              recPercent: Number(recPercent.toFixed(1)),
-              clientesTotais: clientesTotais || 100,
-              meta: metaFinal,
-              falta: Number(faltaCalc.toFixed(2)),
-            });
-          }
-        }
-
-        if (newItems.length > 0) {
-          setColaboradores(newItems);
-          setShowCSVModal(false);
-          setPastedCSV('');
-          showToast(`📊 Sucesso! ${newItems.length} colaboradores carregados da planilha via PapaParse.`);
-        } else {
-          alert('Não foi possível reconhecer registros válidos na planilha. Verifique se o formato contém colunas como FUNCIONÁRIO e PONTOS.');
-        }
+    parseCSVToColaboradores(
+      source,
+      (newItems) => {
+        setColaboradores(newItems);
+        setShowCSVModal(false);
+        setPastedCSV('');
+        showToast(`📊 Sucesso! ${newItems.length} colaboradores carregados da planilha.`);
       },
-      error: (err) => {
-        alert(`Erro ao processar arquivo com PapaParse: ${err.message}`);
-      }
-    });
+      (err) => alert(err),
+      metaPadrao
+    );
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -340,7 +159,7 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-1.5 text-xs bg-emerald-700 text-white hover:bg-emerald-800 px-3 py-1.5 rounded-lg font-bold transition-colors shadow-xs"
-            title="Carregar arquivo CSV ou Excel exportado diretamente"
+            title="Carregar arquivo CSV exportado diretamente"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
             Carregar Planilha (CSV)
@@ -415,7 +234,7 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-800">
-                  Arraste e solte o arquivo CSV/XLSX aqui, ou <span className="text-[#1F4E79] underline">clique para selecionar</span>
+                  Arraste e solte o arquivo CSV aqui, ou <span className="text-[#1F4E79] underline">clique para selecionar</span>
                 </p>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Suporta CSV exportado do Excel, Google Sheets, separado por vírgula ou ponto e vírgula.
@@ -674,7 +493,19 @@ export const BaseDataView: React.FC<BaseDataViewProps> = ({
                   </td>
 
                   {/* Meta */}
-                  <td className="p-2.5 text-center font-mono font-bold">{item.meta || 176}</td>
+                  <td className="p-2.5 text-center font-mono font-bold">
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        step="1"
+                        value={editForm.meta ?? metaPadrao}
+                        onChange={(e) => setEditForm((f) => ({ ...f, meta: parseFloat(e.target.value) || metaPadrao }))}
+                        className="border rounded px-1 py-0.5 text-xs w-16 text-center font-mono font-bold"
+                      />
+                    ) : (
+                      item.meta || metaPadrao
+                    )}
+                  </td>
 
                   {/* Ações */}
                   <td className="p-2.5 text-center">

@@ -1,332 +1,515 @@
 export const GOOGLE_APPS_SCRIPT_CODE = `// =========================================================================
-// SCRIPT ATUALIZADO — Estrutura "PRODUTIVIDADE IAT / VISÃO LÍDER"
-// Com Cálculo de Pontos Diários (Dias Úteis) + Feedback Orientativo e Incentivo
+// GESTÃO RAIO-X — Script Google Apps Script (v3)
+// Mesmo motor de cálculo do Dashboard (Web/Vercel): % Atingimento, Meta
+// Diária em Dias Úteis, Feedback Orientativo/Incentivo e Links WhatsApp.
 // -------------------------------------------------------------------------
-// REGRAS IMPLEMENTADAS:
-//  1. Meta Diária (Dias Úteis): Pergunta ao usuário os dias úteis restantes no mês
-//     e calcula quantos pontos diários o colaborador precisa para atingir a meta (176 pts).
-//  2. Ranking de Desempenho por % de Atingimento = (PONTOS ÷ META) x 100.
-//  3. Feedbacks Personalizados: Gera feedback orientativo e de incentivo no WhatsApp.
-//  4. Exclusão de Status Mês: Quem não tem status "-" é ignorado do ranking, mas listado com aviso.
+// REGRAS:
+//  1. Meta Diária (Dias Úteis): pergunta os dias úteis restantes e calcula
+//     quantos pontos por dia cada colaborador precisa para bater a meta.
+//  2. Ranking por % de Atingimento = (PONTOS ÷ META) x 100.
+//  3. Feedbacks personalizados e link de WhatsApp por colaborador.
+//  4. Quem não está com status "-" (férias, afastado, etc.) fica fora do
+//     ranking, mas aparece listado à parte para transparência.
+//  5. Reconhecimento de colunas tolerante a variações de nome/acentuação,
+//     para funcionar com qualquer CSV colado na aba "Base Raio-X".
 // =========================================================================
 
-function calcularPremiacaoPeloCSV() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var ui = SpreadsheetApp.getUi();
+var ABA_BASE = 'Base Raio-X';
+var ABA_CONTATOS = 'Contatos';
+var ABA_RANKING = '🏆 Ranking de Desempenho';
+var ABA_WHATS = '📱 WhatsApp Disparo';
+var META_PADRAO = 176;
 
-  var abaDados = ss.getSheetByName("Base Raio-X");
-  if (!abaDados) {
-    ui.alert("⚠️ Crie uma aba chamada 'Base Raio-X' e cole os dados lá dentro.");
-    return;
+var FRASES_MOTIVACIONAIS = [
+  'A excelência no detalhe é o que diferencia um bom profissional de um extraordinário.',
+  'O capricho de hoje evita o retrabalho de amanhã. Vamos pra cima!',
+  'O sucesso da operação está nas suas mãos. Cada atendimento conta!',
+  'Não é apenas sobre velocidade, é sobre fazer bem feito e com qualidade.',
+  'O seu esforço diário é o que garante a nossa qualidade em campo. Confio no seu trabalho!',
+  'Com foco na qualidade e disciplina diária, nenhuma meta fica distante!',
+  'Superar desafios em campo faz parte da nossa essência de campeões.'
+];
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('⚖️ Gestão Raio-X')
+    .addItem('1. 🏆 Calcular Ranking Oficial', 'calcularRanking')
+    .addItem('2. 📲 Gerar Links WhatsApp + Feedback', 'gerarLinksWhatsApp')
+    .addToUi();
+}
+
+// =========================================================================
+// UTILITÁRIOS
+// =========================================================================
+
+function textoOuVazio(v) {
+  if (v === null || v === undefined) return '';
+  return v.toString().trim();
+}
+
+function apenasDigitos(v) {
+  var s = textoOuVazio(v);
+  var out = '';
+  for (var i = 0; i < s.length; i++) {
+    var ch = s.charAt(i);
+    if (ch >= '0' && ch <= '9') out += ch;
+  }
+  return out;
+}
+
+function removerAcentos(str) {
+  var normalizado = str.normalize('NFD');
+  var out = '';
+  for (var i = 0; i < normalizado.length; i++) {
+    var code = normalizado.charCodeAt(i);
+    if (code < 768 || code > 879) out += normalizado.charAt(i);
+  }
+  return out;
+}
+
+function normalizarCabecalho(v) {
+  return removerAcentos(textoOuVazio(v).toUpperCase());
+}
+
+function parseNumeroBR(val, valorPadrao) {
+  if (val === null || val === undefined || val === '') return valorPadrao;
+  if (typeof val === 'number') return isNaN(val) ? valorPadrao : val;
+
+  var minusc = val.toString().trim().toLowerCase();
+  if (!minusc) return valorPadrao;
+  if (minusc.indexOf('meta batida') !== -1) return 0;
+
+  var limpo = minusc.split('r$').join('').split('%').join('').split(' ').join('').split('pts/dia').join('');
+
+  var norm = limpo;
+  if (limpo.indexOf(',') !== -1 && limpo.indexOf('.') !== -1) {
+    norm = limpo.split('.').join('').split(',').join('.');
+  } else if (limpo.indexOf(',') !== -1) {
+    norm = limpo.split(',').join('.');
   }
 
-  // Solicitador de Dias Úteis Restantes
-  var respostaDias = ui.prompt("📅 Dias Úteis Restantes", "Informe quantos dias úteis restam no mês para atingir a meta (Ex: 12):", ui.ButtonSet.OK_CANCEL);
-  var diasUteisRestantes = 12; // Valor padrão
-  if (respostaDias.getSelectedButton() === ui.Button.OK) {
-    var val = parseInt(respostaDias.getResponseText().replace(/\D/g, ''), 10);
-    if (!isNaN(val) && val > 0) diasUteisRestantes = val;
+  var num = parseFloat(norm);
+  return isNaN(num) ? valorPadrao : num;
+}
+
+function capitalizarNome(str) {
+  if (!str) return '';
+  var partes = str.toLowerCase().split(' ');
+  var out = [];
+  for (var i = 0; i < partes.length; i++) {
+    var p = partes[i];
+    out.push(p.length > 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p);
+  }
+  return out.join(' ');
+}
+
+function chaveContato(nomeFuncionario) {
+  return textoOuVazio(nomeFuncionario).split('-')[0].trim().toUpperCase();
+}
+
+function perguntarDiasUteis(ui, textoPergunta) {
+  var resposta = ui.prompt('📅 Dias Úteis Restantes', textoPergunta, ui.ButtonSet.OK_CANCEL);
+  if (resposta.getSelectedButton() !== ui.Button.OK) return null;
+  var digitos = apenasDigitos(resposta.getResponseText());
+  var val = parseInt(digitos, 10);
+  if (isNaN(val) || val <= 0) val = 12;
+  return val;
+}
+
+// =========================================================================
+// LEITURA E MAPEAMENTO DA ABA "Base Raio-X"
+// =========================================================================
+
+function mapearColunasBase(headerRow) {
+  var idx = {};
+
+  function definir(campo, i) {
+    if (idx[campo] === undefined) idx[campo] = i;
+  }
+
+  for (var i = 0; i < headerRow.length; i++) {
+    var hdr = normalizarCabecalho(headerRow[i]);
+    if (!hdr) continue;
+
+    if (hdr.indexOf('FUNC') !== -1 || hdr.indexOf('COLABORADOR') !== -1 || hdr.indexOf('NOME') !== -1) {
+      definir('funcionario', i);
+    } else if (hdr.indexOf('CIDADE') !== -1 || hdr.indexOf('PRACA') !== -1 || hdr.indexOf('FILIAL') !== -1) {
+      definir('cidade', i);
+    } else if (hdr.indexOf('SUPERV') !== -1) {
+      definir('supervisor', i);
+    } else if (hdr.indexOf('GERENT') !== -1) {
+      definir('gerente', i);
+    } else if (hdr.indexOf('QUARTIL') !== -1) {
+      definir('quartil', i);
+    } else if (hdr.indexOf('STATUS') !== -1) {
+      definir('statusMes', i);
+    } else if (hdr.indexOf('TIPO') !== -1 || hdr.indexOf('CARGO') !== -1) {
+      definir('tipo', i);
+    } else if (hdr.indexOf('CLIENTE') !== -1) {
+      definir('clientesTotais', i);
+    } else if (hdr.indexOf('INFRAC') !== -1) {
+      definir('infracoes', i);
+    } else if (hdr.indexOf('INST') !== -1) {
+      definir('ptInst', i);
+    } else if (hdr.indexOf('REP') !== -1) {
+      definir('ptRep', i);
+    } else if (hdr.indexOf('EXTRA') !== -1) {
+      definir('ptProdExtra', i);
+    } else if (hdr.indexOf('REG') !== -1) {
+      definir('ptReg', i);
+    } else if (hdr.indexOf('REC') !== -1 && hdr.indexOf('RECORR') === -1 && hdr.indexOf('%') === -1) {
+      definir('ptRec', i);
+    } else if (hdr.indexOf('RECORR') !== -1 || (hdr.indexOf('REC') !== -1 && hdr.indexOf('%') !== -1)) {
+      definir('recPercent', i);
+    } else if (hdr.indexOf('META') !== -1 && hdr.indexOf('DIARIA') === -1) {
+      definir('meta', i);
+    } else if (hdr.indexOf('PONTO') !== -1 || (hdr.indexOf('PTS') !== -1 && hdr.indexOf('DIARIA') === -1 && hdr.indexOf('DIARIOS') === -1)) {
+      definir('pontos', i);
+    }
+  }
+
+  return idx;
+}
+
+function lerBaseRaioX(ss, diasUteisRestantes) {
+  var abaDados = ss.getSheetByName(ABA_BASE);
+  if (!abaDados) {
+    return { erro: 'Crie uma aba chamada "' + ABA_BASE + '" e cole os dados da planilha lá dentro.' };
   }
 
   var dados = abaDados.getDataRange().getValues();
-  if (dados.length <= 1) return ui.alert("⚠️ A aba 'Base Raio-X' está vazia.");
-
-  var cabecalho = dados[0];
-  var colunas = {};
-  for (var i = 0; i < cabecalho.length; i++) {
-    colunas[cabecalho[i].toString().toUpperCase().trim()] = i;
+  if (dados.length < 2) {
+    return { erro: 'A aba "' + ABA_BASE + '" está vazia (só encontrei o cabeçalho, ou nem isso).' };
   }
 
-  if (colunas["FUNCIONÁRIO"] === undefined) {
-    return ui.alert("🛑 ERRO: Coluna 'FUNCIONÁRIO' não encontrada na aba Base Raio-X.");
-  }
-  if (colunas["PONTOS"] === undefined || colunas["META"] === undefined) {
-    return ui.alert("🛑 ERRO: Colunas 'PONTOS' e/ou 'META' não encontradas na aba Base Raio-X.");
+  var idx = mapearColunasBase(dados[0]);
+  if (idx.funcionario === undefined) {
+    return { erro: 'Não encontrei uma coluna de nome (ex: FUNCIONÁRIO, COLABORADOR ou NOME) na aba "' + ABA_BASE + '". Verifique se a primeira linha é o cabeçalho.' };
   }
 
-  var resultados = [];
+  var linhas = [];
 
   for (var r = 1; r < dados.length; r++) {
     var l = dados[r];
-    var funcionario = l[colunas["FUNCIONÁRIO"]];
-    if (!funcionario || funcionario === "") continue;
+    var funcionario = textoOuVazio(l[idx.funcionario]);
+    if (!funcionario) continue;
 
-    var supervisor = colunas["SUPERVISOR"] !== undefined ? l[colunas["SUPERVISOR"]] : "";
-    var quartil = colunas["QUARTIL"] !== undefined ? l[colunas["QUARTIL"]] : "-";
-    var statusMes = colunas["STATUS MÊS"] !== undefined ? l[colunas["STATUS MÊS"]].toString().trim() : "-";
+    var statusMes = idx.statusMes !== undefined ? textoOuVazio(l[idx.statusMes]) : '-';
+    var elegivel = statusMes === '' || statusMes === '-';
 
-    // Exclui do ranking quem está com status diferente de "-" (férias, afastado, etc.)
-    if (statusMes !== "-" && statusMes !== "") continue;
+    var ptInst = idx.ptInst !== undefined ? parseNumeroBR(l[idx.ptInst], 0) : 0;
+    var ptRep = idx.ptRep !== undefined ? parseNumeroBR(l[idx.ptRep], 0) : 0;
+    var ptReg = idx.ptReg !== undefined ? parseNumeroBR(l[idx.ptReg], 0) : 0;
+    var ptRec = idx.ptRec !== undefined ? parseNumeroBR(l[idx.ptRec], 0) : 0;
+    var ptProdExtra = idx.ptProdExtra !== undefined ? parseNumeroBR(l[idx.ptProdExtra], 0) : 0;
+    var infracoes = idx.infracoes !== undefined ? parseNumeroBR(l[idx.infracoes], 0) : 0;
 
-    var vRecStr = colunas["REC (%)"] !== undefined ? l[colunas["REC (%)"]].toString() : "0";
-    var vRec = parseFloat(vRecStr.replace(",", ".").replace("%", "")) || 0;
-    if (vRecStr.indexOf("%") === -1 && vRec <= 1 && vRec > 0) vRec = vRec * 100;
+    var vPontos = idx.pontos !== undefined ? parseNumeroBR(l[idx.pontos], null) : null;
+    if (vPontos === null) {
+      vPontos = ptInst + ptRep + ptReg + ptRec + ptProdExtra - infracoes;
+    }
 
-    var vPontos = parseFloat(l[colunas["PONTOS"]].toString().replace(",", ".")) || 0;
-    var vMeta = parseFloat(l[colunas["META"]].toString().replace(",", ".")) || 0;
-    if (vMeta <= 0) vMeta = 176; // Meta Padrão IAT se não informada
+    var vMeta = idx.meta !== undefined ? parseNumeroBR(l[idx.meta], 0) : 0;
+    if (!(vMeta > 0)) vMeta = META_PADRAO;
+
+    var vRec = idx.recPercent !== undefined ? parseNumeroBR(l[idx.recPercent], 0) : 0;
+    var vClientes = idx.clientesTotais !== undefined ? parseNumeroBR(l[idx.clientesTotais], 0) : 0;
 
     var percentualAtingimento = vMeta > 0 ? (vPontos / vMeta) * 100 : 0;
-
     var pontosFaltantes = Math.max(0, vMeta - vPontos);
     var metaDiaria = diasUteisRestantes > 0 ? (pontosFaltantes / diasUteisRestantes) : 0;
 
-    resultados.push({
+    var ritmo = 'MODERADO';
+    if (pontosFaltantes <= 0) {
+      ritmo = 'BATIDA';
+    } else if (metaDiaria <= 2) {
+      ritmo = 'FACIL';
+    } else if (metaDiaria <= 4) {
+      ritmo = 'MODERADO';
+    } else if (metaDiaria <= 7) {
+      ritmo = 'DESAFIADOR';
+    } else {
+      ritmo = 'CRITICO';
+    }
+
+    linhas.push({
       funcionario: funcionario,
-      supervisor: supervisor,
-      quartil: quartil,
-      percentualAtingimento: percentualAtingimento,
+      cidade: idx.cidade !== undefined ? textoOuVazio(l[idx.cidade]) : '',
+      supervisor: idx.supervisor !== undefined ? textoOuVazio(l[idx.supervisor]) : '',
+      tipo: idx.tipo !== undefined ? textoOuVazio(l[idx.tipo]) : '',
+      quartil: idx.quartil !== undefined ? textoOuVazio(l[idx.quartil]) : '',
+      statusMes: statusMes,
+      elegivel: elegivel,
+      ptInst: ptInst,
+      ptRep: ptRep,
+      ptReg: ptReg,
+      ptRec: ptRec,
+      ptProdExtra: ptProdExtra,
+      infracoes: infracoes,
       pontos: vPontos,
       meta: vMeta,
+      recPercent: vRec,
+      clientesTotais: vClientes,
+      percentualAtingimento: percentualAtingimento,
       pontosFaltantes: pontosFaltantes,
       metaDiaria: metaDiaria,
-      vRec: vRec
+      ritmo: ritmo
     });
   }
 
-  resultados.sort(function(a, b) {
+  return { linhas: linhas };
+}
+
+function lerMapaContatos(ss) {
+  var mapa = {};
+  var abaContatos = ss.getSheetByName(ABA_CONTATOS);
+  if (!abaContatos) return mapa;
+
+  var dados = abaContatos.getDataRange().getValues();
+  for (var r = 1; r < dados.length; r++) {
+    var nomeBruto = dados[r][0];
+    if (!nomeBruto) continue;
+
+    var telefone = dados[r][1];
+    if (!telefone || textoOuVazio(telefone) === '') telefone = dados[r][2];
+
+    var chave = chaveContato(nomeBruto);
+    if (chave) mapa[chave] = telefone ? apenasDigitos(telefone) : '';
+  }
+
+  return mapa;
+}
+
+// =========================================================================
+// 1. RANKING OFICIAL
+// =========================================================================
+
+function calcularRanking() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ui = SpreadsheetApp.getUi();
+
+  var diasUteisRestantes = perguntarDiasUteis(ui, 'Informe quantos dias úteis restam no mês para atingir a meta (ex: 12):');
+  if (diasUteisRestantes === null) return;
+
+  var leitura = lerBaseRaioX(ss, diasUteisRestantes);
+  if (leitura.erro) {
+    ui.alert('🛑 ' + leitura.erro);
+    return;
+  }
+
+  var elegiveis = [];
+  for (var i = 0; i < leitura.linhas.length; i++) {
+    if (leitura.linhas[i].elegivel) elegiveis.push(leitura.linhas[i]);
+  }
+
+  if (elegiveis.length === 0) {
+    ui.alert('⚠️ Nenhum colaborador elegível encontrado (todos com status de mês diferente de "-").');
+    return;
+  }
+
+  elegiveis.sort(function (a, b) {
     if (b.percentualAtingimento !== a.percentualAtingimento) return b.percentualAtingimento - a.percentualAtingimento;
-    return a.vRec - b.vRec;
+    return a.recPercent - b.recPercent;
   });
 
-  var relatorio = [["🏆 RANKING", "👤 FUNCIONÁRIO", "👥 SUPERVISOR", "📊 QUARTIL", "📉 RECORRÊNCIA", "📈 % ATINGIMENTO", "🔢 PONTOS", "🎯 META", "📅 PTS DIÁRIOS (" + diasUteisRestantes + "d)"]];
-  for (var x = 0; x < resultados.length; x++) {
-    var txtMetaDiaria = resultados[x].pontosFaltantes <= 0 ? "Meta Batida!" : resultados[x].metaDiaria.toFixed(2) + " pts/dia";
+  var relatorio = [['🏆 RANKING', '👤 FUNCIONÁRIO', '👥 SUPERVISOR', '📊 QUARTIL', '📉 RECORRÊNCIA', '📈 % ATINGIMENTO', '🔢 PONTOS', '🎯 META', '📅 PTS DIÁRIOS (' + diasUteisRestantes + 'd)']];
+
+  for (var x = 0; x < elegiveis.length; x++) {
+    var item = elegiveis[x];
+    var txtMetaDiaria = item.pontosFaltantes <= 0 ? 'Meta Batida!' : item.metaDiaria.toFixed(2) + ' pts/dia';
     relatorio.push([
-      (x + 1) + "º Lugar",
-      resultados[x].funcionario,
-      resultados[x].supervisor,
-      resultados[x].quartil,
-      resultados[x].vRec.toFixed(1) + "%",
-      resultados[x].percentualAtingimento.toFixed(1) + "%",
-      resultados[x].pontos.toFixed(2),
-      resultados[x].meta.toFixed(2),
+      (x + 1) + 'º Lugar',
+      item.funcionario,
+      item.supervisor,
+      item.quartil,
+      item.recPercent.toFixed(1) + '%',
+      item.percentualAtingimento.toFixed(1) + '%',
+      item.pontos.toFixed(2),
+      item.meta.toFixed(2),
       txtMetaDiaria
     ]);
   }
 
-  var sheetFinal = ss.getSheetByName("🏆 Ranking de Desempenho");
-  if (!sheetFinal) sheetFinal = ss.insertSheet("🏆 Ranking de Desempenho");
+  var sheetFinal = ss.getSheetByName(ABA_RANKING);
+  if (!sheetFinal) sheetFinal = ss.insertSheet(ABA_RANKING);
   sheetFinal.clear();
   sheetFinal.getRange(1, 1, relatorio.length, 9).setValues(relatorio);
-  sheetFinal.getRange("A1:I1").setBackground("#1F4E79").setFontColor("white").setFontWeight("bold");
-  if (resultados.length > 0) sheetFinal.getRange(2, 1, Math.min(3, resultados.length), 9).setBackground("#FFF2CC");
-  sheetFinal.getRange(2, 4, relatorio.length, 6).setHorizontalAlignment("center");
+  sheetFinal.getRange(1, 1, 1, 9).setBackground('#1F4E79').setFontColor('white').setFontWeight('bold');
+
+  var totalLinhasDados = relatorio.length - 1;
+  if (totalLinhasDados > 0) {
+    sheetFinal.getRange(2, 1, Math.min(3, totalLinhasDados), 9).setBackground('#FFF2CC');
+    sheetFinal.getRange(2, 4, totalLinhasDados, 6).setHorizontalAlignment('center');
+  }
+  sheetFinal.setFrozenRows(1);
   sheetFinal.autoResizeColumns(1, 9);
 
-  ui.alert("✅ Ranking gerado com sucesso! (" + resultados.length + " funcionário(s) elegíveis considerados. Dias úteis considerados: " + diasUteisRestantes + ")");
+  var ignorados = leitura.linhas.length - elegiveis.length;
+  var msg = '✅ Ranking gerado com sucesso! ' + elegiveis.length + ' colaborador(es) elegível(is) considerados. Dias úteis: ' + diasUteisRestantes + '.';
+  if (ignorados > 0) {
+    msg += ' (' + ignorados + ' fora do ciclo por status de mês diferente de "-".)';
+  }
+  ui.alert(msg);
 }
 
 // =========================================================================
-// 2. FUNÇÃO: WHATSAPP - MENSAGEM COM META DIÁRIA & FEEDBACK ORIENTATIVO
+// 2. WHATSAPP — META DIÁRIA + FEEDBACK ORIENTATIVO/INCENTIVO
 // =========================================================================
+
+function gerarFeedback(item, diasUteisRestantes, primeiroNome) {
+  var orientativo = '';
+  var incentivo = '';
+
+  if (item.ritmo === 'BATIDA') {
+    orientativo = 'Parabéns! Sua meta de ' + item.meta + ' pontos já foi atingida (' + item.percentualAtingimento.toFixed(1) + '%). Mantenha o foco em evitar infrações de qualidade e manter a recorrência abaixo de 10% para assegurar seu excelente resultado no ciclo.';
+    incentivo = 'Excelente desempenho, ' + primeiroNome + '! Você é referência de produtividade e qualidade no time. Continue firme para buscar/manter a liderança no ranking TOP 3!';
+  } else if (item.ritmo === 'FACIL') {
+    orientativo = 'Faltam apenas ' + item.pontosFaltantes.toFixed(2) + ' pontos para os ' + item.meta + ' pts (' + item.percentualAtingimento.toFixed(1) + '%). Com ' + diasUteisRestantes + ' dias úteis restantes, sua necessidade é de apenas ' + item.metaDiaria.toFixed(2) + ' pts/dia.';
+    incentivo = 'Você está muito perto do objetivo, ' + primeiroNome + '! A meta está ao seu alcance. Mantenha o ritmo consistente nestes dias e garanta sua conquista!';
+  } else if (item.ritmo === 'MODERADO') {
+    orientativo = 'Você está com ' + item.pontos.toFixed(2) + ' pontos (' + item.percentualAtingimento.toFixed(1) + '%). Para atingir os ' + item.meta + ' pts em ' + diasUteisRestantes + ' dias úteis, sua meta diária é de ' + item.metaDiaria.toFixed(2) + ' pts/dia. Recomenda-se focar no mix de instalações e regularizações sem gerar infrações de qualidade.';
+    incentivo = 'Boa evolução, ' + primeiroNome + '! Com disciplina diária nos ' + diasUteisRestantes + ' dias úteis que restam, você tem totais condições de bater a meta e atingir o topo do ranking!';
+  } else if (item.ritmo === 'DESAFIADOR') {
+    orientativo = 'Você tem ' + item.pontos.toFixed(2) + ' pontos (' + item.percentualAtingimento.toFixed(1) + '%) e restam ' + item.pontosFaltantes.toFixed(2) + ' pts. Para alcançar os ' + item.meta + ' pts, o ritmo diário necessário nos ' + diasUteisRestantes + ' dias úteis é de ' + item.metaDiaria.toFixed(2) + ' pts/dia. Alinhe com seu supervisor o plano de rotas e suporte de materiais.';
+    incentivo = 'Ainda há tempo, ' + primeiroNome + '! O desafio é acelerar o ritmo diário. Foco total em resoluções no primeiro atendimento para evitar retrabalhos de recorrência e alavancar seus pontos!';
+  } else {
+    orientativo = 'Pontuação atual: ' + item.pontos.toFixed(2) + ' pts (' + item.percentualAtingimento.toFixed(1) + '%). Faltam ' + item.pontosFaltantes.toFixed(2) + ' pts (' + item.metaDiaria.toFixed(2) + ' pts/dia em ' + diasUteisRestantes + ' dias úteis). É fundamental agendar um alinhamento urgente de rotas e apoio técnico com seu supervisor.';
+    incentivo = 'Não desista, ' + primeiroNome + '! A liderança está à disposição para te apoiar. Cada OS finalizada com qualidade conta muito para reverter o cenário e garantir o resultado!';
+  }
+
+  return { orientativo: orientativo, incentivo: incentivo };
+}
+
+function montarMensagemWhatsApp(item, diasUteisRestantes, mesVigente) {
+  var NL = String.fromCharCode(10);
+  var primeiroNome = capitalizarNome(chaveContato(item.funcionario).split(' ')[0]);
+  var feedback = gerarFeedback(item, diasUteisRestantes, primeiroNome);
+  var frase = FRASES_MOTIVACIONAIS[Math.floor(Math.random() * FRASES_MOTIVACIONAIS.length)];
+
+  var linhas = [];
+  linhas.push('📊 *FECHAMENTO RAIO-X | ' + mesVigente + '* 📊');
+  linhas.push('');
+  linhas.push('Olá, *' + primeiroNome + '*! Tudo bem?');
+  linhas.push('Segue o panorama detalhado da sua produtividade e o plano de ação para atingir a meta:');
+  linhas.push('');
+  linhas.push('🏆 *RESUMO GERAL*');
+  if (item.cidade) linhas.push('📍 *Cidade:* ' + item.cidade);
+  if (item.tipo) linhas.push('🧾 *Tipo:* ' + item.tipo);
+  linhas.push('📈 *% Atingimento da Meta:* ' + item.percentualAtingimento.toFixed(1) + '%');
+  if (item.quartil) linhas.push('🏅 *Quartil:* ' + item.quartil);
+  linhas.push('—');
+  linhas.push('');
+  linhas.push('⚙️ *PONTUAÇÃO DETALHADA*');
+  linhas.push('🔧 *PT Instalação:* ' + item.ptInst.toFixed(2));
+  linhas.push('🔁 *PT Reparo:* ' + item.ptRep.toFixed(2));
+  linhas.push('📋 *PT Regularização:* ' + item.ptReg.toFixed(2));
+  linhas.push('🔄 *PT Recorrência:* ' + item.ptRec.toFixed(2));
+  linhas.push('➕ *PT Produção Extra:* ' + item.ptProdExtra.toFixed(2));
+  linhas.push((item.infracoes === 0 ? '✅' : '🚨') + ' *Infrações de Qualidade:* ' + item.infracoes.toFixed(2));
+  linhas.push('🔢 *Total de Pontos:* ' + item.pontos.toFixed(2) + ' _(Meta: ' + item.meta.toFixed(2) + ')_');
+  linhas.push('—');
+  linhas.push('');
+  linhas.push('🎯 *CALCULADORA DE DIAS ÚTEIS (META ' + item.meta + ' PTS)*');
+  linhas.push('📅 *Dias Úteis Restantes:* ' + diasUteisRestantes + ' dias');
+  linhas.push('⚠️ *Pontos Faltantes:* ' + item.pontosFaltantes.toFixed(2) + ' pts');
+  if (item.ritmo === 'BATIDA') {
+    linhas.push('🎉 *Status Diário:* META BATIDA! (100% Alcançado)');
+  } else {
+    linhas.push('📌 *Meta Diária Necessária:* *' + item.metaDiaria.toFixed(2) + ' pts/dia* em ' + diasUteisRestantes + ' dias úteis');
+  }
+  linhas.push('—');
+  linhas.push('');
+  linhas.push('📉 *QUALIDADE & VOLUME*');
+  linhas.push((item.recPercent <= 10 ? '✅' : '🚨') + ' *Recorrência:* ' + item.recPercent.toFixed(1) + '% _(Meta: ≤10%)_');
+  linhas.push('👥 *Clientes Totais:* ' + item.clientesTotais.toFixed(0));
+  linhas.push('');
+  linhas.push('💡 *FEEDBACK ORIENTATIVO*');
+  linhas.push(feedback.orientativo);
+  linhas.push('');
+  linhas.push('🚀 *INCENTIVO DO LÍDER*');
+  linhas.push(feedback.incentivo);
+  linhas.push('');
+  linhas.push('_"' + frase + '"_');
+
+  return linhas.join(NL);
+}
+
+function mesVigenteAtual(ss) {
+  var meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  var hoje = new Date();
+  return (meses[hoje.getMonth()] + ' de ' + hoje.getFullYear()).toUpperCase();
+}
+
 function gerarLinksWhatsApp() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var ui = SpreadsheetApp.getUi();
 
-  var abaDados = ss.getSheetByName("Base Raio-X");
-  var abaContatos = ss.getSheetByName("Contatos");
+  var diasUteisRestantes = perguntarDiasUteis(ui, 'Quantos dias úteis restam para fechar a meta deste ciclo?');
+  if (diasUteisRestantes === null) return;
 
-  if (!abaDados || !abaContatos) {
-    ui.alert("⚠️ Crie as abas 'Base Raio-X' e 'Contatos'.");
+  var leitura = lerBaseRaioX(ss, diasUteisRestantes);
+  if (leitura.erro) {
+    ui.alert('🛑 ' + leitura.erro);
     return;
   }
 
-  // Solicitador de Dias Úteis Restantes
-  var respostaDias = ui.prompt("📅 Dias Úteis Restantes no Mês", "Quantos dias úteis restam para fechar a meta de 176 pontos?", ui.ButtonSet.OK_CANCEL);
-  var diasUteisRestantes = 12; // padrão
-  if (respostaDias.getSelectedButton() === ui.Button.OK) {
-    var val = parseInt(respostaDias.getResponseText().replace(/\D/g, ''), 10);
-    if (!isNaN(val) && val > 0) diasUteisRestantes = val;
-  }
+  var mapaContatos = lerMapaContatos(ss);
+  var temAbaContatos = ss.getSheetByName(ABA_CONTATOS) !== null;
+  var mesVigente = mesVigenteAtual(ss);
 
-  var dadosContatos = abaContatos.getDataRange().getValues();
-  var mapaWhats = {};
-
-  for (var c = 1; c < dadosContatos.length; c++) {
-    var nomeContatoBruto = dadosContatos[c][0];
-    var whatsContato = dadosContatos[c][1];
-    if (!whatsContato || whatsContato.toString().trim() === "") {
-      whatsContato = dadosContatos[c][2];
-    }
-
-    if (nomeContatoBruto) {
-      var nomeLimpo = nomeContatoBruto.toString().split("-")[0].trim().toUpperCase();
-      mapaWhats[nomeLimpo] = whatsContato ? whatsContato.toString().replace(/\\D/g, '') : "";
-    }
-  }
-
-  var dados = abaDados.getDataRange().getValues();
-  var col = {};
-  for (var i = 0; i < dados[0].length; i++) {
-    col[dados[0][i].toString().toUpperCase().trim()] = i;
-  }
-
-  if (col["FUNCIONÁRIO"] === undefined) {
-    return ui.alert("🛑 ERRO: Coluna 'FUNCIONÁRIO' não encontrada na Base Raio-X.");
-  }
-
-  var relatorioWhats = [["👤 FUNCIONÁRIO", "📱 LINK DE DISPARO (WHATSAPP)"]];
-  var funcionariosProcessados = {};
-
-  var dataAtual = new Date();
-  var meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-
-  var frasesMotivacionais = [
-    "A excelência no detalhe é o que diferencia um bom profissional de um extraordinário.",
-    "O capricho de hoje evita o retrabalho de amanhã. Vamos pra cima!",
-    "O sucesso da operação está nas suas mãos. Cada atendimento conta!",
-    "Não é apenas sobre velocidade, é sobre fazer bem feito e com qualidade.",
-    "O seu esforço diário é o que garante a nossa qualidade em campo. Confio no seu trabalho!"
-  ];
-
-  for (var r = 1; r < dados.length; r++) {
-    var funcionario = dados[r][col["FUNCIONÁRIO"]];
-    if (!funcionario || funcionario === "") continue;
-
-    var nomeLimpoFunc = funcionario.toString().split("-")[0].trim().toUpperCase();
-
-    if (funcionariosProcessados[nomeLimpoFunc]) continue;
-    funcionariosProcessados[nomeLimpoFunc] = true;
-
-    var numeroWhats = mapaWhats[nomeLimpoFunc];
-
-    if (!numeroWhats || numeroWhats === "") {
-      relatorioWhats.push([funcionario, "❌ NÚMERO NÃO ENCONTRADO NA ABA CONTATOS"]);
-      continue;
-    }
-
-    var statusMes = col["STATUS MÊS"] !== undefined ? dados[r][col["STATUS MÊS"]].toString().trim() : "-";
-
-    if (statusMes !== "-" && statusMes !== "") {
-      relatorioWhats.push([funcionario, "ℹ️ Status do mês: " + statusMes + " — fora do ciclo de premiação"]);
-      continue;
-    }
-
-    var vCidade = col["CIDADE"] !== undefined ? dados[r][col["CIDADE"]].toString() : "";
-    var vTipo = col["TIPO"] !== undefined ? dados[r][col["TIPO"]].toString() : "";
-    var vQuartil = col["QUARTIL"] !== undefined ? dados[r][col["QUARTIL"]].toString().trim() : "";
-
-    var vPtInst = col["PT INST."] !== undefined ? (parseFloat(dados[r][col["PT INST."]].toString().replace(",", ".")) || 0) : 0;
-    var vPtRep = col["PT REP."] !== undefined ? (parseFloat(dados[r][col["PT REP."]].toString().replace(",", ".")) || 0) : 0;
-    var vPtReg = col["PT REG."] !== undefined ? (parseFloat(dados[r][col["PT REG."]].toString().replace(",", ".")) || 0) : 0;
-    var vPtRec = col["PT REC."] !== undefined ? (parseFloat(dados[r][col["PT REC."]].toString().replace(",", ".")) || 0) : 0;
-    var vPtProdExtra = col["PT PROD.EXTRA"] !== undefined ? (parseFloat(dados[r][col["PT PROD.EXTRA"]].toString().replace(",", ".")) || 0) : 0;
-    var vInfracoes = col["INFRAÇÕES QUALIDADE"] !== undefined ? (parseFloat(dados[r][col["INFRAÇÕES QUALIDADE"]].toString().replace(",", ".")) || 0) : 0;
-
-    var vPontos = col["PONTOS"] !== undefined ? (parseFloat(dados[r][col["PONTOS"]].toString().replace(",", ".")) || 0) : 0;
-    var vMeta = col["META"] !== undefined ? (parseFloat(dados[r][col["META"]].toString().replace(",", ".")) || 0) : 0;
-    if (vMeta <= 0) vMeta = 176;
-
-    var percentualAtingimento = vMeta > 0 ? (vPontos / vMeta) * 100 : 0;
-    var faltaPontos = Math.max(0, vMeta - vPontos);
-    var metaDiaria = diasUteisRestantes > 0 ? (faltaPontos / diasUteisRestantes) : 0;
-
-    var vRecStr = col["REC (%)"] !== undefined ? dados[r][col["REC (%)"]].toString() : "0";
-    var vRec = parseFloat(vRecStr.replace(",", ".").replace("%", "")) || 0;
-    if (vRecStr.indexOf("%") === -1 && vRec <= 1 && vRec > 0) vRec = vRec * 100;
-
-    var vClientesTotais = col["CLIENTES TOTAIS"] !== undefined ? (parseFloat(dados[r][col["CLIENTES TOTAIS"]].toString().replace(",", ".")) || 0) : 0;
-
-    var mesPlanilha = col["MÊS (ANO E MÊS)"] !== undefined ? dados[r][col["MÊS (ANO E MÊS)"]] : null;
-    var mesVigente = mesPlanilha ? mesPlanilha.toString().toUpperCase() : (meses[dataAtual.getMonth()] + " DE " + dataAtual.getFullYear()).toUpperCase();
-
-    var primeiroNome = capitalizarNome(nomeLimpoFunc.split(" ")[0]);
-    var fraseSorteada = frasesMotivacionais[Math.floor(Math.random() * frasesMotivacionais.length)];
-
-    // GERAÇÃO DE FEEDBACK ORIENTATIVO & INCENTIVO
-    var feedbackOrientativo = "";
-    var feedbackIncentivo = "";
-
-    if (faltaPontos === 0) {
-      feedbackOrientativo = "Sua meta principal de " + vMeta + " pontos já foi atingida! Mantenha o foco na qualidade (recorrência ≤ 10% e zero infrações) para proteger seu prêmio integral.";
-      feedbackIncentivo = "Sensacional trabalho, " + primeiroNome + "! Você superou os " + vMeta + " pontos e é destaque na operação. Vamos firme para conquistar o TOP 3 do ranking!";
-    } else if (metaDiaria <= 2.5) {
-      feedbackOrientativo = "Faltam apenas " + faltaPontos.toFixed(2) + " pontos para atingir os " + vMeta + " pts. Em " + diasUteisRestantes + " dias úteis, sua meta é de apenas " + metaDiaria.toFixed(2) + " pts/dia (cerca de 1 OS/dia).";
-      feedbackIncentivo = "Você está com o prêmio na mão, " + primeiroNome + "! Mantendo sua rotina normal com atenção aos detalhes, você fecha o mês com chave de ouro!";
-    } else if (metaDiaria <= 5.0) {
-      feedbackOrientativo = "Você acumula " + vPontos.toFixed(2) + " pts. Para chegar aos " + vMeta + " pts, necessita de " + metaDiaria.toFixed(2) + " pts/dia nos próximos " + diasUteisRestantes + " dias úteis. Priorize instalações e evite infrações de qualidade.";
-      feedbackIncentivo = "Ritmo plenamente alcançável, " + primeiroNome + "! Mantenha a disciplina nas rotas diárias que o objetivo será cumprido!";
-    } else {
-      feedbackOrientativo = "Pontuação atual: " + vPontos.toFixed(2) + " pts. Para atingir a meta de " + vMeta + " pts, é necessário acelerar para " + metaDiaria.toFixed(2) + " pts/dia em " + diasUteisRestantes + " dias úteis. Vamos alinhar seu roteiro com o supervisor.";
-      feedbackIncentivo = "Foco total na virada de jogo, " + primeiroNome + "! Com suporte técnico, alinhamento de rotas e empenho diário, é possível buscar esses pontos e garantir sua premiação!";
-    }
-
-    // =========================================================
-    // MONTAGEM DA MENSAGEM DO WHATSAPP
-    // =========================================================
-
-    var textoZAP = "📊 *FECHAMENTO RAIO-X | " + mesVigente + "* 📊\n\n";
-    textoZAP += "Olá, *" + primeiroNome + "*! Tudo bem?\n";
-    textoZAP += "Segue o panorama completo dos seus indicadores deste ciclo. Vamos analisar juntos:\n\n";
-
-    // BLOCO 1: GERAL
-    textoZAP += "🏆 *RESUMO GERAL*\n";
-    if (vCidade) textoZAP += "📍 *Cidade:* " + vCidade + "\n";
-    if (vTipo) textoZAP += "🧾 *Tipo:* " + vTipo + "\n";
-    textoZAP += "📈 *% Atingimento da Meta:* " + percentualAtingimento.toFixed(1) + "%\n";
-    if (vQuartil !== "") textoZAP += "🏅 *Quartil:* " + vQuartil + "\n";
-    textoZAP += "—\n\n";
-
-    // BLOCO 2: PONTUAÇÃO DETALHADA
-    textoZAP += "⚙️ *PONTUAÇÃO DETALHADA*\n";
-    textoZAP += "🔧 *PT Instalação:* " + vPtInst.toFixed(2) + "\n";
-    textoZAP += "🔁 *PT Reparo:* " + vPtRep.toFixed(2) + "\n";
-    textoZAP += "📋 *PT Regularização:* " + vPtReg.toFixed(2) + "\n";
-    textoZAP += "🔄 *PT Recorrência:* " + vPtRec.toFixed(2) + "\n";
-    textoZAP += "➕ *PT Produção Extra:* " + vPtProdExtra.toFixed(2) + "\n";
-    textoZAP += (vInfracoes === 0 ? "✅" : "🚨") + " *Infrações de Qualidade:* " + vInfracoes.toFixed(2) + "\n";
-    textoZAP += "🔢 *Total de Pontos:* " + vPontos.toFixed(2) + " _(Meta: " + vMeta.toFixed(2) + ")_\n";
-    textoZAP += "—\n\n";
-
-    // BLOCO 3: CALCULADORA DE DIAS ÚTEIS (META 176)
-    textoZAP += "🎯 *META DIÁRIA EM DIAS ÚTEIS (176 PTS)*\n";
-    textoZAP += "📅 *Dias Úteis Restantes:* " + diasUteisRestantes + " dias\n";
-    textoZAP += "⚠️ *Pontos Faltantes para 176:* " + faltaPontos.toFixed(2) + " pts\n";
-    if (faltaPontos <= 0) {
-      textoZAP += "🎉 *Meta Diária:* META BATIDA! (100% Concluído)\n";
-    } else {
-      textoZAP += "📌 *Meta Diária Necessária:* *" + metaDiaria.toFixed(2) + " pts/dia*\n";
-    }
-    textoZAP += "—\n\n";
-
-    // BLOCO 4: QUALIDADE E VOLUME
-    textoZAP += "📉 *QUALIDADE & VOLUME*\n";
-    textoZAP += (vRec <= 10 ? "✅" : "🚨") + " *Recorrência:* " + vRec.toFixed(1) + "% _(Meta: ≤10%)_\n";
-    textoZAP += "👥 *Clientes Totais:* " + vClientesTotais.toFixed(0) + "\n\n";
-
-    // BLOCO 5: FEEDBACK ORIENTATIVO E INCENTIVO
-    textoZAP += "💡 *FEEDBACK ORIENTATIVO*\n" + feedbackOrientativo + "\n\n";
-    textoZAP += "🚀 *INCENTIVO DA LIDERANÇA*\n" + feedbackIncentivo + "\n\n";
-
-    textoZAP += "_\"" + fraseSorteada + "\"_";
-
-    var linkWhatsApp = "https://api.whatsapp.com/send?phone=" + numeroWhats + "&text=" + encodeURIComponent(textoZAP);
-    var formula = '=HYPERLINK("' + linkWhatsApp + '"; "📲 ENVIAR MENSAGEM")';
-
-    relatorioWhats.push([funcionario, formula]);
-  }
-
-  var sheetLinks = ss.getSheetByName("📱 WhatsApp Disparo");
-  if (!sheetLinks) sheetLinks = ss.insertSheet("📱 WhatsApp Disparo");
+  var sheetLinks = ss.getSheetByName(ABA_WHATS);
+  if (!sheetLinks) sheetLinks = ss.insertSheet(ABA_WHATS);
   sheetLinks.clear();
 
-  sheetLinks.getRange(1, 1, relatorioWhats.length, 2).setValues(relatorioWhats);
-  sheetLinks.getRange("A1:B1").setBackground("#25D366").setFontColor("white").setFontWeight("bold");
-  sheetLinks.autoResizeColumns(1, 2);
+  var header = ['👤 FUNCIONÁRIO', '📈 % ATINGIMENTO', '📱 LINK DE DISPARO (WHATSAPP)'];
+  sheetLinks.getRange(1, 1, 1, header.length).setValues([header]);
+  sheetLinks.getRange(1, 1, 1, header.length).setBackground('#25D366').setFontColor('white').setFontWeight('bold');
 
-  ui.alert("✅ Links de WhatsApp com Meta Diária e Feedbacks gerados com sucesso!");
-}
+  var enviados = 0;
+  var semTelefone = 0;
+  var foraDoCiclo = 0;
 
-function capitalizarNome(str) {
-  if (!str) return "";
-  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-}
+  for (var i = 0; i < leitura.linhas.length; i++) {
+    var item = leitura.linhas[i];
+    var linha = i + 2;
 
-function onOpen() {
-  SpreadsheetApp.getUi().createMenu('⚖️ Gestão Raio-X')
-    .addItem('1. Calcular Novo Ranking Oficial', 'calcularPremiacaoPeloCSV')
-    .addItem('2. 📲 Gerar Links (WhatsApp)', 'gerarLinksWhatsApp')
-    .addToUi();
+    sheetLinks.getRange(linha, 1).setValue(item.funcionario);
+    sheetLinks.getRange(linha, 2).setValue(item.percentualAtingimento.toFixed(1) + '%');
+
+    if (!item.elegivel) {
+      foraDoCiclo++;
+      sheetLinks.getRange(linha, 3).setValue('ℹ️ Status do mês: ' + item.statusMes + ' — fora do ciclo de premiação');
+      continue;
+    }
+
+    var chave = chaveContato(item.funcionario);
+    var numeroWhats = mapaContatos[chave];
+
+    if (!numeroWhats) {
+      semTelefone++;
+      var textoFalta = temAbaContatos
+        ? '❌ Número não encontrado na aba "Contatos" (verifique o nome "' + chave + '")'
+        : '❌ Crie uma aba "Contatos" com o nome e o telefone de cada colaborador';
+      sheetLinks.getRange(linha, 3).setValue(textoFalta);
+      continue;
+    }
+
+    var textoZAP = montarMensagemWhatsApp(item, diasUteisRestantes, mesVigente);
+    var linkWhatsApp = 'https://api.whatsapp.com/send?phone=' + numeroWhats + '&text=' + encodeURIComponent(textoZAP);
+
+    var richValue = SpreadsheetApp.newRichTextValue()
+      .setText('📲 Enviar Mensagem WhatsApp')
+      .setLinkUrl(linkWhatsApp)
+      .build();
+    sheetLinks.getRange(linha, 3).setRichTextValue(richValue);
+    enviados++;
+  }
+
+  sheetLinks.setFrozenRows(1);
+  sheetLinks.autoResizeColumns(1, 3);
+
+  var msg = '✅ Links de WhatsApp gerados! ' + enviados + ' pronto(s) para envio.';
+  if (semTelefone > 0) msg += ' ' + semTelefone + ' sem telefone cadastrado.';
+  if (foraDoCiclo > 0) msg += ' ' + foraDoCiclo + ' fora do ciclo (status de mês).';
+  ui.alert(msg);
 }
 `;

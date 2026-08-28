@@ -63,6 +63,9 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
       digits = '55' + digits;
     }
 
+    // Só é um telefone BR válido com 12 ou 13 dígitos (55 + DDD + número)
+    if (digits.length !== 12 && digits.length !== 13) return '';
+
     return digits;
   };
 
@@ -82,6 +85,19 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     }
     return clean;
   };
+
+  // Normaliza nome para uso como chave de vínculo: maiúsculas, sem acentos e
+  // sem espaços duplicados. Sem isso, pequenas diferenças de grafia entre a
+  // planilha de telefones e a Base Raio-X (ex: "JOSÉ" vs "JOSE") faziam o
+  // telefone importar com sucesso mas nunca aparecer vinculado a ninguém.
+  const normalizarChave = (nome: string): string =>
+    nome
+      .split('-')[0]
+      .trim()
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ');
 
   // Parser do CSV/Texto para mapa de telefones
   const processarTextoCSV = (source: File | string) => {
@@ -111,7 +127,6 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
               col.includes('FUNC') ||
               col.includes('NOME') ||
               col.includes('COLABORADOR') ||
-              col.includes('RE') ||
               col.includes('TECNICO')
             ) {
               nameIdx = idx;
@@ -157,11 +172,11 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
           if (!row || row.length < 1) continue;
 
           const rawNome = (row[nameIdx] || '').toString().trim();
-          const rawTel = (row[phoneIdx] || row[nameIdx + 1] || '').toString().trim();
+          const rawTel = (row[phoneIdx] || '').toString().trim();
 
           if (!rawNome) continue;
 
-          const nomeChave = rawNome.split('-')[0].trim().toUpperCase();
+          const nomeChave = normalizarChave(rawNome);
           const telFormatado = formatarTelefoneWhatsApp(rawTel);
 
           if (nomeChave && telFormatado) {
@@ -211,7 +226,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
       alert('Digite o nome do colaborador.');
       return;
     }
-    const nomeChave = novoNome.split('-')[0].trim().toUpperCase();
+    const nomeChave = normalizarChave(novoNome);
     const telFormat = formatarTelefoneWhatsApp(novoTelefone);
 
     if (!telFormat) {
@@ -246,7 +261,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     const chavesUnicas = new Set<string>();
 
     colaboradores.forEach((c) => {
-      const chave = c.funcionario.split('-')[0].trim().toUpperCase();
+      const chave = normalizarChave(c.funcionario);
       chavesUnicas.add(chave);
     });
 
@@ -255,7 +270,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     chavesUnicas.forEach((chave) => {
       const tel = telefonesMapa[chave] || '';
       const colab = colaboradores.find(
-        (c) => c.funcionario.split('-')[0].trim().toUpperCase() === chave
+        (c) => normalizarChave(c.funcionario) === chave
       );
       const status = colab ? 'Vinculado' : 'Sem Colaborador no Raio-X';
       csv += `${colab ? colab.funcionario : chave};${tel};${status}\n`;
@@ -269,6 +284,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleBaixarModeloCSV = () => {
@@ -283,12 +299,13 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Cruzamento de colaboradores com os telefones
   const listaMapeada = colaboradores.map((c) => {
-    const chave = c.funcionario.split('-')[0].trim().toUpperCase();
-    const tel = telefonesMapa[chave] || telefonesMapa[c.funcionario.trim().toUpperCase()] || '';
+    const chave = normalizarChave(c.funcionario);
+    const tel = telefonesMapa[chave] || '';
     return {
       colaborador: c,
       chave,
@@ -297,9 +314,13 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     };
   });
 
-  // Chaves do mapa que não estão na lista de colaboradores atual
+  // Chaves do mapa que não estão na lista de colaboradores atual — telefones
+  // importados com sucesso, mas cujo nome não bate com nenhum colaborador
+  // da Base Raio-X atual (grafia diferente, colaborador ainda não
+  // importado, etc). Antes ficavam ocultos: o toast de sucesso aparecia,
+  // mas o número nunca era exibido em lugar nenhum da tela.
   const chavesExtras = Object.keys(telefonesMapa).filter(
-    (k) => !colaboradores.some((c) => c.funcionario.split('-')[0].trim().toUpperCase() === k)
+    (k) => !colaboradores.some((c) => normalizarChave(c.funcionario) === k)
   );
 
   const totalColaboradores = colaboradores.length;
@@ -319,6 +340,15 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
     if (filtroStatus === 'vinculados') return !!item.telefone;
     if (filtroStatus === 'sem_telefone') return !item.telefone;
     return true;
+  });
+
+  // Telefones importados cujo nome não bate com nenhum colaborador atual —
+  // sempre têm telefone cadastrado, então não entram no filtro "sem telefone".
+  const chavesExtrasFiltradas = chavesExtras.filter((chave) => {
+    if (filtroStatus === 'sem_telefone') return false;
+    const buscaLower = busca.toLowerCase();
+    const tel = telefonesMapa[chave] || '';
+    return chave.toLowerCase().includes(buscaLower) || tel.includes(buscaLower);
   });
 
   return (
@@ -514,7 +544,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {listaFiltrada.length === 0 ? (
+              {listaFiltrada.length === 0 && chavesExtrasFiltradas.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-slate-500 italic">
                     Nenhum colaborador ou telefone encontrado.
@@ -599,6 +629,67 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
                   );
                 })
               )}
+
+              {chavesExtrasFiltradas.map((chave) => {
+                const tel = telefonesMapa[chave] || '';
+                return (
+                  <tr key={`extra-${chave}`} className="hover:bg-amber-50/60 transition-colors bg-amber-50/30">
+                    <td className="p-3">
+                      <p className="font-bold text-slate-900">{chave}</p>
+                      <p className="text-[10px] text-slate-500">Importado, sem colaborador correspondente</p>
+                    </td>
+
+                    <td className="p-3 text-slate-400 italic">—</td>
+
+                    <td className="p-3">
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                        <AlertCircle className="w-3 h-3" />
+                        Não vinculado
+                      </span>
+                    </td>
+
+                    <td className="p-3">
+                      <div className="flex items-center gap-2">
+                        <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                        <input
+                          type="text"
+                          placeholder="5511999998888"
+                          value={tel}
+                          onChange={(e) => {
+                            const novoVal = formatarTelefoneWhatsApp(e.target.value);
+                            setTelefonesMapa((prev) => ({
+                              ...prev,
+                              [chave]: novoVal,
+                            }));
+                          }}
+                          className="bg-slate-50 border border-slate-200 hover:border-slate-300 rounded px-2.5 py-1 text-xs font-mono text-slate-800 w-44 focus:outline-none focus:bg-white focus:border-emerald-500 transition-all"
+                        />
+                      </div>
+                    </td>
+
+                    <td className="p-3 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <a
+                          href={`https://api.whatsapp.com/send?phone=${tel}&text=Olá%20${encodeURIComponent(chave)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="Testar Link do WhatsApp"
+                        >
+                          <Send className="w-4 h-4" />
+                        </a>
+                        <button
+                          onClick={() => handleRemoverTelefone(chave)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Remover Telefone"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -638,7 +729,7 @@ export const PhoneImportView: React.FC<PhoneImportViewProps> = ({
                 />
                 <datalist id="colaboradores-lista">
                   {colaboradores.map((col) => (
-                    <option key={col.id} value={col.funcionario.split('-')[0].trim().toUpperCase()} />
+                    <option key={col.id} value={normalizarChave(col.funcionario)} />
                   ))}
                 </datalist>
               </div>
